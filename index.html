@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>正则编译与执行台 · 有序 Thompson NFA</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#171d24; --panel2:#1d242d; --line:#2a3440;
+    --fg:#d7dee6; --dim:#8b99a7; --accent:#6cb6ff; --accent2:#7ee0b0;
+    --warn:#e0a06c; --err:#ff7b72; --sel:#243140;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+    font:13px/1.55 "SF Mono",ui-monacons,Menlo,Consolas,"PingFang SC","Microsoft YaHei",monospace}
+  body{padding:14px 16px 40px}
+  h1{font-size:15px;margin:0 0 2px;font-weight:600;letter-spacing:.5px}
+  .sub{color:var(--dim);font-size:12px;margin-bottom:12px}
+  .layout{display:grid;grid-template-columns:340px 1fr 380px;gap:12px;align-items:start}
+  @media(max-width:1180px){.layout{grid-template-columns:1fr 1fr}}
+  @media(max-width:800px){.layout{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+  .panel h2{font-size:12px;margin:0 0 8px;color:var(--accent);font-weight:600;letter-spacing:.6px;text-transform:uppercase}
+  label{display:block;color:var(--dim);font-size:11px;margin:8px 0 3px}
+  input[type=text],textarea{width:100%;background:#0c1116;color:var(--fg);border:1px solid var(--line);
+    border-radius:6px;padding:7px 9px;font:inherit;resize:vertical}
+  input[type=text]:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  textarea{min-height:96px;white-space:pre;word-break:break-all}
+  .counter{float:right;color:var(--dim);font-size:11px}
+  .err{color:var(--err);font-size:12px;margin-top:6px;white-space:pre-wrap}
+  .warn{color:var(--warn)}
+  .ok{color:var(--accent2)}
+  button{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;
+    padding:5px 12px;font:inherit;cursor:pointer;margin:0 6px 0 0}
+  button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:#1c3147;border-color:#2f4d6b;color:var(--accent)}
+  .controls{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:8px}
+  .stale{color:var(--warn);font-size:12px;margin-left:8px}
+  table{border-collapse:collapse;width:100%;font-size:12px}
+  td,th{padding:1px 7px;border-bottom:1px solid #202832;white-space:nowrap}
+  th{color:var(--dim);font-weight:400;text-align:left;position:sticky;top:0;background:var(--panel)}
+  .ins-table .pc{color:var(--dim);text-align:right;width:38px}
+  .ins-table tr.active{background:var(--sel)}
+  .ins-table tr.cand{background:#2c3b22}
+  .ins-table tr.prefix{opacity:.45}
+  .mn{color:var(--dim)}
+  .op{color:var(--accent2)}
+  .tgt{color:var(--accent)}
+  .scroll{max-height:330px;overflow:auto;border:1px solid var(--line);border-radius:6px}
+  .scroll.tall{max-height:440px}
+  .thread-pc{color:var(--accent);font-weight:600}
+  .regs{font-size:11px;color:var(--dim)}
+  .reg{display:inline-block;min-width:30px;padding:0 3px;margin:1px;border-radius:3px}
+  .reg.set{color:#0f1419;border-radius:3px}
+  .g0{background:#c9d4de}.g1{background:#ff9f9f}.g2{background:#ffc98f}.g3{background:#ffe68f}
+  .g4{background:#9fe6a8}.g5{background:#9fd6ff}.g6{background:#c3a7ff}.g7{background:#ff9ed1}.g8{background:#8fe3d8}
+  .strip{font:inherit;white-space:pre-wrap;word-break:break-all;background:#0c1116;border:1px solid var(--line);
+    border-radius:6px;padding:8px;min-height:44px;max-height:220px;overflow:auto;line-height:1.7}
+  .ch{border-left:1px solid transparent;border-right:1px solid transparent;border-radius:2px}
+  .ch.nl{color:var(--dim)}
+  .ch.cur{background:#2f4d6b !important;outline:1px solid var(--accent)}
+  .ch.m0{background:rgba(108,182,255,.28);outline:1px solid rgba(108,182,255,.7)}
+  .ch.mg1{box-shadow:inset 0 -2px 0 #ff9f9f}.ch.mg2{box-shadow:inset 0 -2px 0 #ffc98f}
+  .ch.mg3{box-shadow:inset 0 -2px 0 #ffe68f}.ch.mg4{box-shadow:inset 0 -2px 0 #9fe6a8}
+  .ch.mg5{box-shadow:inset 0 -2px 0 #9fd6ff}.ch.mg6{box-shadow:inset 0 -2px 0 #c3a7ff}
+  .ch.mg7{box-shadow:inset 0 -2px 0 #ff9ed1}.ch.mg8{box-shadow:inset 0 -2px 0 #8fe3d8}
+  .ruler{color:var(--dim);font-size:11px;margin:4px 2px;white-space:pre-wrap;word-break:break-all}
+  .caprow{display:flex;gap:8px;margin:3px 0;font-size:12px;align-items:baseline}
+  .caprow .k{flex:0 0 64px}
+  .badge{display:inline-block;padding:0 6px;border-radius:3px;color:#0f1419;font-size:11px;margin-right:6px}
+  .ev{color:var(--dim);font-size:11px}
+  .ev b{color:var(--warn);font-weight:600}
+  .ev .ok2{color:var(--accent2)}
+  .patview{white-space:pre-wrap;word-break:break-all;background:#0c1116;border:1px solid var(--line);border-radius:6px;padding:7px 9px;margin-top:6px}
+  .patview .bad{background:#5a1f1c;color:#ffb4ae;border-radius:2px}
+  details summary{cursor:color:var(--accent);color:var(--accent)}
+  .testres{white-space:pre-wrap;font-size:12px;margin-top:8px;max-height:300px;overflow:auto}
+  .stepno{color:var(--dim);font-size:11px;margin-top:6px}
+  input[type=range]{vertical-align:middle}
+</style>
+</head>
+<body>
+
+<h1>正则编译与执行台</h1>
+<div class="sub">自行解析 · 编译为带捕获寄存器的有序 Thompson NFA · Pike 风格线程模拟（不使用浏览器 RegExp，不枚举全部路径）</div>
+
+<div class="layout">
+
+<!-- ============ 左栏：输入与控制 ============ -->
+<div>
+  <div class="panel">
+    <h2>① 模式</h2>
+    <span class="counter" id="patCount">0 / 120</span>
+    <input type="text" id="pattern" maxlength="120" spellcheck="false" autocomplete="off"
+           value="(a(b)?)*" placeholder="例如 (a|ab)\d*">
+    <div class="patview" id="patView"></div>
+    <div class="err" id="patErr"></div>
+    <div class="ev" id="patMeta"></div>
+  </div>
+
+  <div class="panel">
+    <h2>② ASCII 文本</h2>
+    <span class="counter" id="txtCount">0 / 2000</span>
+    <textarea id="text" maxlength="2000" spellcheck="false">aba</textarea>
+    <div class="err" id="txtErr"></div>
+  </div>
+
+  <div class="panel">
+    <h2>③ 执行 / 轨迹</h2>
+    <div class="controls">
+      <button class="primary" id="btnRun">▶ 运行到结果</button>
+      <button id="btnStep">⏭ 下一字符位置</button>
+      <button id="btnAuto">⏯ 自动播放</button>
+      <button id="btnReset">⏮ 复位轨迹</button>
+    </div>
+    <div class="controls">
+      <label style="margin:0">速度 <input type="range" id="speed" min="0" max="900" value="500" style="width:130px"></label>
+      <span class="stale" id="staleNote"></span>
+    </div>
+    <div class="stepno" id="stepNo"></div>
+    <div class="ev" id="eventLog"></div>
+  </div>
+
+  <div class="panel">
+    <h2>匹配结果与捕获</h2>
+    <div id="result"></div>
+  </div>
+</div>
+
+<!-- ============ 中栏：指令 + 线程 ============ -->
+<div>
+  <div class="panel">
+    <h2>编译指令（有序 NFA）</h2>
+    <div class="ev" style="margin-bottom:6px">
+      SPLIT 第一路优先（分支左项 / 贪婪继续）；SAVE r(2n),r(2n+1) 为组 n 起终点；
+      NULL 仅在重复的“再来一轮”路径上清空循环内部寄存器（该轮最终失败则寄存器随线程丢弃）；末尾 ANY 是“推进起点”线程（非锚定搜索）。
+    </div>
+    <div class="scroll tall"><table class="ins-table" id="insTable"></table></div>
+  </div>
+
+  <div class="panel">
+    <h2>当前位置活跃线程（按优先级排序）</h2>
+    <div class="scroll tall" id="threadList"></div>
+  </div>
+</div>
+
+<!-- ============ 右栏：文本带 + 测试 ============ -->
+<div>
+  <div class="panel">
+    <h2>文本位置带</h2>
+    <div class="ruler" id="ruler"></div>
+    <div class="strip" id="strip"></div>
+    <div class="ev" style="margin-top:6px">
+      蓝底=整体匹配（或当前候选），彩色下划线=捕获组；深蓝光标=下一待消费字符位置。
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>独立有序回溯解释器核对</h2>
+    <div class="ev">
+      对小输入运行：固定边界用例（含“先成功的分支却较短”“重复组内可选捕获”“线程合流捕获不泄漏”）
+      与 3000 组随机 fuzz，比较匹配区间与全部捕获组。
+    </div>
+    <div class="controls"><button id="btnTest" class="primary">运行核对测试</button></div>
+    <div class="testres err" id="testRes"></div>
+  </div>
+
+  <div class="panel">
+    <h2>语义说明</h2>
+    <div class="ev">
+      · 支持：字面量、转义、<b>.</b>、字符类（含 \d \w \s 及取反）、连接、<b>|</b>、捕获括号、贪婪 <b>* + ?</b><br>
+      · 不支持：回溯引用、前后向断言、惰性量词；量词操作数可匹配空串即语法错误<br>
+      · 最左起点优先；随后按分支从左到右、贪婪重复优先继续的路径排序，<b>非全局最长</b><br>
+      · 低优先级线程先抵达 MATCH 时只记录候选，更高优先级线程继续，可能后来居上<br>
+      · 同一字符位置到达同一指令只保留最先（优先）到达者，寄存器按线程隔离，不合流泄漏<br>
+      · 循环内捕获以最后一轮为准，该轮未参与记 null（由循环入口的 NULL 指令保证）
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script src="regex-core.js"></script>
+<script>
+"use strict";
+/* =====================================================================
+ * 正则引擎：解析 -> 编译 -> 有序 NFA 模拟（生成器，结果与轨迹同源）
+ * 全程不使用浏览器 RegExp。
+ * ===================================================================== */
+
+/* ------------------- 独立有序回溯解释器（核对用） ------------------- */
+// 延续传递：cont(pos) -> 成功返回终点 number，失败 null。贪婪=先尝试再来一轮。
+function backtrackMatch(parsed, text) {
+  const ast = parsed.ast;
+  const total = parsed.groupCount;
+  const regs = new Array(2*(total+1)).fill(null);
+
+  function trying(fn) {
+    const snap = regs.slice();
+    const r = fn();
+    if (r === null) { for (let i=0;i<snap.length;i++) regs[i]=snap[i]; }
+    return r;
+  }
+  function M(node, p, cont) {
+    switch (node.t) {
+      case "lit":
+        if (p < text.length && text.charCodeAt(p) === node.code) return cont(p+1);
+        return null;
+      case "dot":
+        if (p < text.length && text.charCodeAt(p) !== 10) return cont(p+1);
+        return null;
+      case "class": {
+        const f = classTest(node);
+        if (p < text.length && f(text.charCodeAt(p))) return cont(p+1);
+        return null;
+      }
+      case "cat":
+        return (function loop(i, pp){
+          if (i === node.xs.length) return cont(pp);
+          return M(node.xs[i], pp, function(np){ return loop(i+1, np); });
+        })(0, p);
+      case "alt": {
+        for (let i=0;i<node.xs.length;i++) {
+          const r = trying(function(){ return M(node.xs[i], p, cont); });
+          if (r !== null) return r;
+        }
+        return null;
+      }
+      case "group":
+        return trying(function(){
+          regs[2*node.n] = p;
+          return M(node.body, p, function(np){ regs[2*node.n+1] = np; return cont(np); });
+        });
+      case "quant": {
+        const inner = node.x;
+        const gs = groupsUnder(inner);
+        function clearInner(){ gs.forEach(function(g){ regs[2*g]=null; regs[2*g+1]=null; }); }
+        function star(pp) {
+          // 高优先：再来一轮（入口清空循环内部寄存器）
+          const r = trying(function(){
+            clearInner();
+            return M(inner, pp, function(np){ if (np===pp) return null; return star(np); });
+          });
+          if (r !== null) return r;
+          return cont(pp); // 低优先：退出重复
+        }
+        if (node.op === "?") {
+          const r = trying(function(){ return M(inner, p, cont); });
+          return r !== null ? r : cont(p);
+        }
+        if (node.op === "*") return star(p);
+        // +：强制一轮
+        return trying(function(){
+          clearInner();
+          return M(inner, p, function(np){ return star(np); });
+        });
+      }
+    }
+    return null;
+  }
+
+  // 最左起点
+  for (let s=0;s<=text.length;s++) {
+    const r = trying(function(){
+      regs[0] = s;
+      return M(ast, s, function(e){ regs[1] = e; return e; });
+    });
+    if (r !== null) {
+      const groups = [];
+      for (let g=1;g<=8;g++) {
+        const a = regs[2*g], b = regs[2*g+1];
+        groups.push(a === undefined || b === undefined || a === null || b === null
+                    ? null : [a,b]);
+      }
+      return { start:regs[0], end:r, groups:groups };
+    }
+  }
+  return null;
+}
+
+/* ----------------------------- 自测 ----------------------------- */
+function mulberry32(seed){ return function(){
+  let t = seed += 0x6D2B79F5; t = Math.imul(t^t>>>15,t|1); t ^= t+Math.imul(t^t>>>7,t|61);
+  return ((t^t>>>14)>>>0)/4294967296;
+};}
+
+function fixedTests() {
+  const cases = [
+    // [模式, 文本, 期望 start/end 或 null, {组号:[s,e]或null}]
+    ["a|ab", "ab", [0,1], {}],                 // 先成功的分支较短，仍取它
+    ["ab|a", "ab", [0,2], {}],                 // 低优先分支先短成功，高优先继续后胜出
+    ["(a)|a", "a", [0,1], {1:[0,1]}],          // 合流点：第二线程捕获不泄漏/不顶替
+    ["(a(b)|a(c))d", "abd", [0,3], {1:[0,2],2:[1,2],3:null}],
+    ["(a(b)|a(c))d", "acd", [0,3], {1:[0,2],2:null,3:[1,2]}],
+    ["(a(b)?)*", "aa", [0,2], {1:[1,2],2:null}],   // 重复组内可选捕获，最后一轮未参与
+    ["(a(b)?)*", "abab", [0,4], {1:[2,4],2:[3,4]}],
+    ["(a(b)?)*", "aba", [0,3], {1:[2,3],2:null}],
+    ["((a)|b)*", "bb", [0,2], {1:[1,2],2:null}],   // 本轮走无捕获分支，旧捕获清空
+    ["((a)|b)*", "ba", [0,2], {1:[1,2],2:[1,2]}],
+    ["(a)+", "aaa", [0,3], {1:[2,3]}],
+    ["x*", "abc", [0,0], {}],
+    ["b(a*)", "baa", [0,3], {1:[1,3]}],
+    ["(a*)(b*)", "aab", [0,3], {1:[0,2],2:[2,3]}],
+    ["", "abc", [0,0], {}],
+    ["()b", "b", [0,1], {1:[0,0]}],
+    ["a.c", "abc", [0,3], {}],
+    ["a.c", "a\nc", null, {}],
+    ["\\d+", "ab123x", [2,5], {}],
+    ["[^0-9]+", "ab12", [0,2], {}],
+    ["[\\d.]+", "1.2x", [0,3], {}],
+    ["colou?r", "color", [0,5], {}],
+    ["(ab?)*", "aab", [0,3], {1:[1,3]}],
+    ["(a|b)*c", "abc", [0,3], {1:[1,2]}],
+    ["z+", "abc", null, {}],
+    ["(a|ab)c", "abc", [0,3], {1:[0,2]}],     // 分支 a 后接 c 失败，回溯式优先级 -> ab
+    ["(x|y)?z", "z", [0,1], {1:null}],
+  ];
+  const failures = [];
+  for (const [pat,text,span,groups] of cases) {
+    const parsed = parsePattern(pat);
+    const prog = compileProgram(parsed);
+    const got = runToEnd(prog, text);
+    const want = span ? { start:span[0], end:span[1] } : null;
+    if (!sameResult(got, want, groups)) {
+      failures.push({pat:pat,text:text,got:got,want:wants(want,groups)});
+    }
+  }
+  return failures;
+}
+function wants(span, groups) {
+  const g = new Array(8).fill(null);
+  Object.keys(groups||{}).forEach(function(k){ g[k-1] = groups[k]; });
+  return span ? { start:span[0], end:span[1], groups:g } : null;
+}
+function sameResult(got, want, groupMap) {
+  if (!want) return got === null;
+  if (!got) return false;
+  if (got.start !== want.start || got.end !== want.end) return false;
+  const keys = groupMap ? Object.keys(groupMap) : [];
+  for (const k of keys) {
+    const w = groupMap[k];
+    const gg = got.groups[k-1];
+    if (w === null) { if (gg !== null) return false; }
+    else { if (!gg || gg[0]!==w[0] || gg[1]!==w[1]) return false; }
+  }
+  return true;
+}
+
+// 随机 AST 生成 -> 反解析为合法源串
+function fuzz(rng) {
+  let groupBudget = 8;
+  const alpha = [97,98,99]; // a b c
+  function lit(){ return { t:"lit", code: alpha[Math.floor(rng()*3)], pos:0 }; }
+  function atom(allowGroup, depth) {
+    if (allowGroup && groupBudget > 0 && rng() < 0.45) {
+      groupBudget--;
+      const body = expr(depth+1);
+      return { t:"group", n:0, body:body, pos:0 };
+    }
+    const r = rng();
+    if (r < 0.55) return lit();
+    if (r < 0.7) return { t:"dot", pos:0 };
+    if (r < 0.85){
+      const items = [];
+      if (rng()<0.5) items.push([97,98]); else items.push([98,99]);
+      if (rng()<0.3) items.push({cat:"d"});
+      return { t:"class", neg:rng()<0.25, items:items, pos:0 };
+    }
+    return { t:"class", neg:false, items:[{cat: rng()<0.5?"d":"w"}], pos:0 };
+  }
+  function repeat(depth) {
+    let a = atom(true, depth);
+    // 原子均不可空，可直接加量词；组内容可能可空，则不加
+    if (rng()<0.5 && !nullable(a)) {
+      const ops = ["*","+","?"];
+      a = { t:"quant", op:ops[Math.floor(rng()*3)], x:a, pos:0 };
+    }
+    return a;
+  }
+  function cat(depth) {
+    const cnt = 1 + Math.floor(rng()*3);
+    const xs = [];
+    for (let i=0;i<cnt;i++) xs.push(repeat(depth));
+    return { t:"cat", xs:xs, pos:0 };
+  }
+  function expr(depth) {
+    if (depth > 3) return cat(depth);
+    if (rng() < 0.35) {
+      const b = 1 + Math.floor(rng()*2);
+      const xs = [];
+      for (let i=0;i<b;i++) xs.push(cat(depth));
+      return { t:"alt", xs:xs, pos:0 };
+    }
+    return cat(depth);
+  }
+  const ast = expr(0);
+  return unparse(ast);
+}
+function unparse(n) {
+  switch (n.t) {
+    case "lit": return showCh(n.code);
+    case "dot": return ".";
+    case "class": return classLabel(n);
+    case "cat": return n.xs.map(unparse).join("");
+    case "alt": return n.xs.map(unparse).join("|");
+    case "group": return "(" + unparse(n.body) + ")";
+    case "quant": return atomSrc(n.x) + n.op;
+  }
+}
+function atomSrc(n){
+  const s = unparse(n);
+  // 需要括号保护的情况
+  if (n.t === "alt") return "(?:" + s + ")"; // 注意：?: 不被支持，量词不会作用于 alt，见生成器
+  return s;
+}
+function randomText(rng) {
+  const alphabet = ["a","b","c","0"," ",".","\n"];
+  const len = Math.floor(rng()*6);
+  let s = "";
+  for (let i=0;i<len;i++) s += alphabet[Math.floor(rng()*alphabet.length)];
+  return s;
+}
+
+function runSelfTests() {
+  const failures = fixedTests();
+  let fixedFail = failures.length;
+  const rng = mulberry32(20261005);
+  let fuzzTotal = 0, fuzzFail = 0;
+  const fuzzFailures = [];
+  for (let i=0;i<3000;i++) {
+    const pat = fuzz(rng);
+    const text = randomText(rng);
+    let parsed, prog, got, ref;
+    try {
+      parsed = parsePattern(pat);
+      prog = compileProgram(parsed);
+      got = runToEnd(prog, text);
+      ref = backtrackMatch(parsed, text);
+    } catch (err) {
+      fuzzFail++; fuzzFailures.push({pat:pat,text:text,error:String(err&&err.message||err)}); continue;
+    }
+    fuzzTotal++;
+    if (!eqResult(got, ref)) {
+      fuzzFail++;
+      if (fuzzFailures.length < 12)
+        fuzzFailures.push({pat:pat,text:JSON.stringify(text),got:got,ref:ref});
+    }
+  }
+  const errorCases = [
+    ["*",0], ["a**",2], ["a*?",2], ["a+?",2], ["a??",2],
+    ["(",0], ["a(",1], ["[a-",0], ["[z-a]",2], ["\\q",0],
+    ["(a?)*",4], ["^a",0], ["a$",1], ["(((((((((",8], ["a\\",1],
+    ["(?a)",1], ["\\b",0], ["[\\q]",1]
+  ];
+  let errFail = 0; const errDetails = [];
+  for (const [pat,wantPos] of errorCases) {
+    try { parsePattern(pat); errFail++; errDetails.push(pat+" 未报错"); }
+    catch (e) { if (e.pos !== wantPos) { errFail++; errDetails.push(pat+" 报错位置 "+e.pos+"，应为 "+wantPos+"（"+e.message+"）"); } }
+  }
+  // 9 个捕获组
+  let nine = "((((((((a))))))))"; // 8 组，合法
+  let nineOk = true;
+  try { parsePattern(nine); } catch(e){ nineOk=false; }
+  let ten = "(((((((((a)))))))))"; // 9 组，第 9 个 '(' 在位置 8
+  let tenPosOk = false;
+  try { parsePattern(ten); } catch(e){ tenPosOk = (e.pos === 8); }
+
+  return {
+    fixedFail:fixedFail, failures:failures,
+    fuzzTotal:fuzzTotal, fuzzFail:fuzzFail, fuzzFailures:fuzzFailures,
+    errFail:errFail, errDetails:errDetails,
+    eightGroupsOk:nineOk, nineGroupsPosOk:tenPosOk
+  };
+}
+function eqResult(a,b) {
+  if (a === null) return b === null;
+  if (b === null) return false;
+  if (a.start !== b.start || a.end !== b.end) return false;
+  for (let i=0;i<8;i++) {
+    const x=a.groups[i], y=b.groups[i];
+    if (x===null){ if(y!==null) return false; }
+    else { if(!y||x[0]!==y[0]||x[1]!==y[1]) return false; }
+  }
+  return true;
+}
+
+// 暴露给 Node 核对
+if (typeof globalThis !== "undefined") {
+  globalThis.RX = {
+    parsePattern:parsePattern, compileProgram:compileProgram, simulate:simulate,
+    runToEnd:runToEnd, backtrackMatch:backtrackMatch, runSelfTests:runSelfTests
+  };
+}
+
+/* ===================================================================== */
+/*                                  UI                                   */
+/* ===================================================================== */
+if (typeof document !== "undefined") {
+const $ = function(id){ return document.getElementById(id); };
+const patEl=$("pattern"), txtEl=$("text"), patErr=$("patErr"), txtErr=$("txtErr"),
+      patView=$("patView"), patMeta=$("patMeta"), patCount=$("patCount"), txtCount=$("txtCount"),
+      insTable=$("insTable"), threadList=$("threadList"), stripEl=$("strip"), rulerEl=$("ruler"),
+      resultEl=$("result"), eventLog=$("eventLog"), stepNo=$("stepNo"), staleNote=$("staleNote"),
+      btnRun=$("btnRun"), btnStep=$("btnStep"), btnAuto=$("btnAuto"), btnReset=$("btnReset"),
+      btnTest=$("btnTest"), testRes=$("testRes"), speedEl=$("speed");
+
+let session = null;       // {prog,text,parsed,it,frame,done,alive,result,auto}
+let charSpans = [];
+
+/* ---------------- 指令文本 ---------------- */
+function insText(ins, pc) {
+  switch(ins.op) {
+    case "Char": return ["CHAR", "<span class='tgt'>" + escapeHtml(ins.label) + "</span>"];
+    case "Any":  return ["ANY", "<span class='mn'>推进一个起点位置</span>"];
+    case "Split":return ["SPLIT", "→ <span class='tgt'>"+ins.x+"</span> / <span class='tgt'>"+ins.y+"</span>"];
+    case "Jmp":  return ["JMP", "<span class='tgt'>"+ins.to+"</span>"];
+    case "Save": {
+      const who = ins.whole ? (ins.reg===0?"整体 起点":"整体 终点")
+              : "组"+((ins.reg>>1))+" "+(ins.reg%2?"终点":"起点");
+      return ["SAVE", "r"+ins.reg+" <span class='mn'>; "+who+"</span>"];
+    }
+    case "Reset":return ["NULL", ins.regs.map(function(r){return "r"+r;}).join(", ") +
+                         " <span class='mn'>; 新一轮循环入口清空</span>"];
+    case "Match":return ["MATCH", ""];
+  }
+}
+function escapeHtml(s){
+  let out = "";
+  for (let i=0;i<s.length;i++) {
+    const c = s.charCodeAt(i);
+    out += c === 38 ? "&amp;" : c === 60 ? "&lt;" : c === 62 ? "&gt;" : s[i];
+  }
+  return out;
+}
+// 转义仅用于界面显示；匹配引擎本身不使用任何浏览器正则能力。
+
+function renderInstructions(prog) {
+  const rows = [];
+  prog.code.forEach(function(ins,pc){
+    const t = insText(ins,pc);
+    rows.push("<tr class='"+(ins.prefix?"prefix":"")+"' data-pc='"+pc+"'>"+
+      "<td class='pc'>"+pc+"</td><td class='op'>"+t[0]+"</td><td>"+t[1]+"</td></tr>");
+  });
+  insTable.innerHTML = "<tr><th class='pc'>地址</th><th>操作</th><th>操作数</th></tr>" + rows.join("");
+}
+
+/* ---------------- 模式视图与错误定位 ---------------- */
+function renderPatternView() {
+  const src = patEl.value;
+  patCount.textContent = src.length + " / 120";
+  patErr.textContent = "";
+  patView.classList.remove("err");
+  if (session && session.parseError) {
+    const e = session.parseError;
+    let pos = Math.min(e.pos, src.length);
+    let html = "";
+    if (src.length === 0) html = "<span class='bad'> </span>";
+    else html = escapeHtml(src.slice(0,pos)) + "<span class='bad'>" +
+           escapeHtml(src.slice(pos, pos+1) || " ") + "</span>" +
+           escapeHtml(src.slice(pos+1));
+    patView.innerHTML = html;
+    patErr.textContent = "位置 " + pos + "：" + e.message;
+  } else {
+    patView.textContent = src;
+  }
+}
+
+/* ---------------- 文本带 ---------------- */
+function renderStrip() {
+  const text = txtEl.value;
+  txtCount.textContent = text.length + " / 2000";
+  charSpans = [];
+  let html = "";
+  for (let i=0;i<text.length;i++) {
+    const ch = text[i];
+    const shown = ch === "\n" ? "↵\n" : ch;
+    html += "<span class='ch"+(ch==="\n"?" nl":"")+"' data-i='"+i+"'>"+escapeHtml(shown)+"</span>";
+  }
+  if (!text.length) html = "<span class='mn'>（空文本）</span>";
+  stripEl.innerHTML = html;
+  charSpans = Array.prototype.slice.call(stripEl.querySelectorAll(".ch"));
+  // 位置标尺（每 10 字符）
+  let ruler = "";
+  for (let i=0;i<text.length;i+=10)
+    ruler += i + Array(Math.max(1, 10-String(i).length)).join(" ") ;
+  rulerEl.textContent = ruler;
+}
+function cls(i, clsName, on) {
+  const el = charSpans[i];
+  if (!el) return;
+  el.classList.toggle(clsName, !!on);
+}
+function clearDecor() {
+  charSpans.forEach(function(el){ el.className = "ch" + (el.dataset.nl==="1"?" nl":""); });
+  // nl 标记依据内容重建
+  charSpans.forEach(function(el){ if(el.textContent.indexOf("↵")===0) el.classList.add("nl"); });
+}
+function paint(registers, end, curPos) {
+  clearDecor();
+  if (registers) {
+    if (registers[0] !== null && end !== null && registers[0] !== undefined) {
+      for (let i=registers[0];i<end;i++) cls(i,"m0",true);
+    }
+    for (let g=1;g<=8;g++) {
+      const a=registers[2*g], b=registers[2*g+1];
+      if (a!==null&&b!==null&&a!==undefined)
+        for (let i=a;i<b;i++) cls(i,"mg"+g,true);
+    }
+  }
+  if (curPos!=null) cls(curPos,"cur",true);
+}
+
+/* ---------------- 会话构建（编辑即失效旧轨迹） ---------------- */
+function rebuildSession() {
+  if (session && session.auto) { clearTimeout(session.auto); session.auto=null; }
+  btnAuto.textContent = "⏯ 自动播放";
+  const text = txtEl.value;
+  let asciiOk = true;
+  for (let i=0;i<text.length;i++) if (text.charCodeAt(i) > 127) { asciiOk=false; break; }
+  txtErr.textContent = asciiOk ? "" : "文本只能包含 ASCII 字符（码点 < 128）";
+  renderPatternView();
+  if (!asciiOk) {
+    session = null;
+    insTable.innerHTML = ""; threadList.innerHTML = ""; resultEl.innerHTML = "";
+    eventLog.textContent=""; stepNo.textContent="";
+    paint(null);
+    return;
+  }
+  let parsed=null, prog=null, error=null;
+  try {
+    parsed = parsePattern(patEl.value);
+    prog = compileProgram(parsed);
+  } catch (e) { error = e; }
+  session = {
+    parsed:parsed, prog:prog, text:text, parseError:error,
+    it:null, frame:null, done:false, result:null, alive:true, auto:null, started:false
+  };
+  renderPatternView();
+  if (error) {
+    patMeta.textContent = "";
+    insTable.innerHTML = ""; threadList.innerHTML=""; resultEl.innerHTML="";
+    eventLog.textContent=""; stepNo.textContent="";
+    paint(null);
+    updateButtons();
+    return;
+  }
+  patMeta.innerHTML = "捕获组：" + parsed.groupCount + " / 8 · 指令 " +
+    prog.code.length + " 条 <span class='mn'>（含非锚定外壳 3 条）</span>";
+  renderInstructions(prog);
+  renderStrip();
+  resetTrace();
+}
+
+function resetTrace() {
+  if (!session || !session.prog) return;
+  if (session.auto) { clearTimeout(session.auto); session.auto=null; }
+  btnAuto.textContent = "⏯ 自动播放";
+  session.it = simulate(session.prog, session.text);
+  session.frame = null;
+  session.done = false;
+  session.result = null;
+  session.started = false;
+  staleNote.textContent = "";
+  threadList.innerHTML = "";
+  eventLog.textContent = "";
+  resultEl.innerHTML = "<span class='mn'>尚未执行</span>";
+  paint(null);
+  stepNo.textContent = "已复位";
+  updateButtons();
+}
+
+function stepOnce() {
+  if (!session || !session.prog || session.done) return false;
+  const v = session.it.next();
+  session.started = true;
+  if (v.done) {
+    session.done = true; session.result = v.value.result;
+    renderFrame(null); renderResult();
+    if (session.auto){ clearTimeout(session.auto); session.auto=null; btnAuto.textContent="⏯ 自动播放"; }
+    updateButtons();
+    return false;
+  }
+  session.frame = v.value;
+  renderFrame(v.value);
+  if (v.thenDone) {
+    session.done = true; session.result = v._result;
+    renderResult();
+    if (session.auto){ clearTimeout(session.auto); session.auto=null; btnAuto.textContent="⏯ 自动播放"; }
+  }
+  updateButtons();
+  return !session.done;
+}
+
+function updateButtons() {
+  const ready = !!(session && session.prog);
+  btnRun.disabled = !ready || session && session.done;
+  btnStep.disabled = !ready || session.done;
+  btnReset.disabled = !ready;
+  btnAuto.disabled = !ready || session.done;
+}
+
+/* ---------------- 帧渲染 ---------------- */
+function regBadges(regs) {
+  const prog = session.prog;
+  const maxG = 8;
+  const parts = [];
+  for (let g=0;g<=maxG;g++) {
+    const a=regs[2*g], b=regs[2*g+1];
+    const clsName = "reg g"+g;
+    const label = g===0 ? "M" : String(g);
+    if (a===null && b===null) {
+      parts.push("<span class='reg mn'>"+label+":-</span>");
+    } else {
+      parts.push("<span class='reg set "+clsName+"'>"+label+":"+fmt(a)+","+fmt(b)+"</span>");
+    }
+  }
+  return parts.join("");
+}
+function fmt(v){ return v===null||v===undefined ? "·" : v; }
+
+function renderFrame(frame) {
+  const prog = session.prog;
+  // 指令表高亮
+  const activePcs = {};
+  if (frame) frame.active.forEach(function(t){ activePcs[t.pc]=true; });
+  const rows = insTable.querySelectorAll("tr[data-pc]");
+  for (let i=0;i<rows.length;i++) {
+    const r = rows[i], pc = +r.dataset.pc;
+    r.classList.toggle("active", !!activePcs[pc]);
+    r.classList.toggle("cand", false);
+  }
+  // 候选所在（若有）——无法直接定位 pc，统一在事件里说明
+  if (!frame) { threadList.innerHTML=""; return; }
+
+  // 线程表
+  let html = "<table><tr><th>#</th><th>pc</th><th>指令</th><th>寄存器（捕获区间）</th></tr>";
+  if (!frame.active.length) html += "<tr><td colspan=4 class='mn'>（无活跃线程）</td></tr>";
+  frame.active.forEach(function(t,i){
+    const ins = prog.code[t.pc];
+    const txt = insText(ins);
+    html += "<tr><td class='mn'>"+i+"</td><td class='thread-pc'>"+t.pc+"</td>"+
+            "<td><span class='op'>"+txt[0]+"</span> "+txt[1]+"</td>"+
+            "<td class='regs'>"+regBadges(t.regs)+"</td></tr>";
+  });
+  html += "</table>";
+  threadList.innerHTML = html;
+
+  stepNo.textContent = "位置 pos=" + frame.pos +
+    (frame.pos < session.text.length
+      ? "　下一字符 '" + visibleTextChar(session.text.charCodeAt(frame.pos)) + "' (code " + session.text.charCodeAt(frame.pos) + ")"
+      : "　（文本末尾，仅检测 epsilon-MATCH）") +
+    "　线程 " + frame.active.length + " 条" +
+    (frame.candidate ? "　候选成功 [" + frame.candidate.regs[0] + "," + frame.candidate.end + ")" : "");
+
+  // 事件
+  const ev = frame.events;
+  const logs = [];
+  if (ev) {
+    if (ev.candidateNew) logs.push("<span class='ok2'>● 记录成功候选（低优先级路径先抵达 MATCH，高优先级线程继续）</span>");
+    if (ev.candidateReplaced) logs.push("<span class='ok2'>● 更高优先级线程成功，替换原候选</span>");
+    if (ev.pruned) logs.push("● 候选已锁定优先级，剪枝其后 <b>"+ev.pruned+"</b> 个低优先级线程");
+    if (ev.merges.length) logs.push("● 同位置同指令合流 "+ev.merges.length+" 处（pc "+
+      ev.merges.slice(0,8).join(",")+(ev.merges.length>8?"…":"")+"），保留最先到达者，其余寄存器丢弃不泄漏");
+    if (frame.active.length===0) logs.push("● 线程全部结束");
+    if (ev.died>0) logs.push("● "+ev.died+" 个线程因当前字符不匹配而死亡");
+  }
+  eventLog.innerHTML = logs.join("<br>");
+
+  // 文本带
+  const candRegs = frame.candidate ? frame.candidate.regs : null;
+  const candEnd = frame.candidate ? frame.candidate.end : null;
+  paint(candRegs, candEnd, frame.pos < session.text.length ? frame.pos : null);
+}
+function visibleTextChar(c){
+  if (c===10) return "\\n"; if (c===9) return "\\t"; if (c===13) return "\\r"; if (c===32) return "空格";
+  return String.fromCharCode(c);
+}
+
+function renderResult() {
+  const r = session.result;
+  if (!r) {
+    resultEl.innerHTML = "<span class='err'>匹配失败（无任何线程抵达 MATCH）</span>";
+    paint(null);
+    return;
+  }
+  const text = session.text;
+  function sub(a,b){ return escapeHtml(JSON.stringify(text.slice(a,b))); }
+  let html = "<div class='caprow'><span class='k'><span class='badge g0'>整体</span></span>" +
+    "<span>["+r.start+", "+r.end+")　"+sub(r.start,r.end)+"</span></div>";
+  const parsed = session.parsed;
+  for (let g=1;g<=parsed.groupCount;g++) {
+    const span = r.groups[g-1];
+    if (!span) html += "<div class='caprow'><span class='k'><span class='badge g"+g+"'>组"+g+"</span></span>"+
+      "<span class='mn'>null（未参与最后定案路径）</span></div>";
+    else html += "<div class='caprow'><span class='k'><span class='badge g"+g+"'>组"+g+"</span></span>" +
+      "<span>["+span[0]+", "+span[1]+")　"+sub(span[0],span[1])+"</span></div>";
+  }
+  resultEl.innerHTML = html;
+  paint(session.frame && session.frame.candidate ? session.frame.candidate.regs : regsFromResult(r),
+        r.end, null);
+}
+function regsFromResult(r){
+  const a = new Array(18).fill(null);
+  a[0]=r.start; a[1]=r.end;
+  for (let g=1;g<=8;g++){ const s=r.groups[g-1]; if(s){a[2*g]=s[0];a[2*g+1]=s[1];} }
+  return a;
+}
+
+/* ---------------- 控件 ---------------- */
+let editTimer=null;
+function onEdit(){
+  if (session && session.started) staleNote.textContent = "已编辑：旧轨迹失效，不可继续";
+  clearTimeout(editTimer);
+  editTimer = setTimeout(function(){ rebuildSession(); }, 60);
+}
+patEl.addEventListener("input", onEdit);
+txtEl.addEventListener("input", onEdit);
+
+btnStep.addEventListener("click", function(){ stepOnce(); });
+btnRun.addEventListener("click", function(){
+  while (stepOnce()) {}
+});
+btnReset.addEventListener("click", function(){ resetTrace(); });
+btnAuto.addEventListener("click", function(){
+  if (!session || session.done) return;
+  if (session.auto) {
+    clearTimeout(session.auto); session.auto=null;
+    btnAuto.textContent = "⏯ 自动播放";
+    return;
+  }
+  btnAuto.textContent = "⏸ 暂停";
+  function tick(){
+    if (!session || session.done) return;
+    const cont = stepOnce();
+    if (cont) {
+      const delay = 950 - (+speedEl.value);
+      session.auto = setTimeout(tick, delay);
+    }
+  }
+  session.auto = setTimeout(tick, 60);
+});
+
+btnTest.addEventListener("click", function(){
+  testRes.classList.remove("err");
+  testRes.classList.add("ok");
+  testRes.textContent = "核对中…";
+  setTimeout(function(){
+    let out;
+    try { out = runSelfTests(); }
+    catch(e){ testRes.classList.add("err"); testRes.textContent = "测试异常: "+(e.stack||e); return; }
+    const lines = [];
+    lines.push("固定边界用例：" + (out.fixedFail===0 ? "全部通过" : out.fixedFail+" 个失败"));
+    out.failures.forEach(function(f){ lines.push("  ✗ /"+f.pat+"/ on "+JSON.stringify(f.text)+
+      " got="+JSON.stringify(f.got)); });
+    lines.push("随机 fuzz："+out.fuzzTotal+" 组，" + (out.fuzzFail===0?"全部通过":out.fuzzFail+" 个失败"));
+    out.fuzzFailures.forEach(function(f){
+      lines.push("  ✗ /"+f.pat+"/ on "+f.text+(f.error?" 异常 "+f.error:
+        " got="+JSON.stringify(f.got)+" ref="+JSON.stringify(f.ref)));
+    });
+    lines.push("语法错误定位：" + (out.errFail===0?"全部定位正确":out.errFail+" 个不正确"));
+    out.errDetails.forEach(function(d){ lines.push("  ✗ "+d); });
+    lines.push("8 组可编译："+(out.eightGroupsOk?"是":"否")+"；第 9 组报错于第 8 位："+(out.nineGroupsPosOk?"是":"否"));
+    const allPass = out.fixedFail===0 && out.fuzzFail===0 && out.errFail===0 &&
+                    out.eightGroupsOk && out.nineGroupsPosOk;
+    lines.unshift(allPass ? "✔ 全部核对通过（NFA 引擎 = 有序回溯解释器）\n" : "✘ 存在不一致\n");
+    testRes.textContent = lines.join("\n");
+    testRes.classList.toggle("ok", allPass);
+    testRes.classList.toggle("err", !allPass);
+  }, 10);
+});
+
+// 启动
+rebuildSession();
+// 默认展示几帧便于直接观察
+(function intro(){
+  for (let i=0;i<3;i++) if (!stepOnce()) break;
+})();
+}
+</script>
+</body>
+</html>
