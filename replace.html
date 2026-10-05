@@ -1,3 +1,84 @@
-<!doctype html><meta charset="utf-8"><title>捕获替换</title><h1>有序 NFA 捕获替换</h1>
-<label>模式<input id="pattern" value="(a)?b"></label><label>原文<textarea id="source">ab b ab</textarea></label><label>替换模板<input id="template" value="$1-$&"></label><button id="run">执行替换</button><pre id="result"></pre>
-<script src="regex-core.js"></script><script src="replacement.js"></script><script src="replace-page.js"></script>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>捕获替换 · 有序 NFA</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#171d24; --panel2:#1d242d; --line:#2a3440;
+    --fg:#d7dee6; --dim:#8b99a7; --accent:#6cb6ff; --accent2:#7ee0b0;
+    --err:#ff7b72;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+    font:13px/1.55 "SF Mono",ui-monospace,Menlo,Consolas,"PingFang SC","Microsoft YaHei",monospace}
+  body{padding:14px 16px 40px;max-width:1080px}
+  h1{font-size:15px;margin:0 0 2px;font-weight:600;letter-spacing:.5px}
+  .sub{color:var(--dim);font-size:12px;margin-bottom:12px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+  .panel h2{font-size:12px;margin:0 0 8px;color:var(--accent);font-weight:600;letter-spacing:.6px;text-transform:uppercase}
+  label{display:block;color:var(--dim);font-size:11px;margin:8px 0 3px}
+  input[type=text],textarea{width:100%;background:#0c1116;color:var(--fg);border:1px solid var(--line);
+    border-radius:6px;padding:7px 9px;font:inherit;resize:vertical}
+  input[type=text]:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  textarea{min-height:72px;white-space:pre;word-break:break-all}
+  .counter{float:right;color:var(--dim);font-size:11px}
+  .err{color:var(--err);font-size:12px;margin-top:6px;white-space:pre-wrap}
+  .ok{color:var(--accent2)}
+  .mn{color:var(--dim)}
+  button{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;
+    padding:5px 12px;font:inherit;cursor:pointer}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  .controls{margin-top:8px}
+  .strip{white-space:pre-wrap;word-break:break-all;background:#0c1116;border:1px solid var(--line);
+    border-radius:6px;padding:8px;min-height:40px;max-height:260px;overflow:auto;line-height:1.7}
+  table{border-collapse:collapse;width:100%;font-size:12px;margin-top:6px}
+  td,th{padding:2px 8px;border-bottom:1px solid #202832;text-align:left;vertical-align:top}
+  th{color:var(--dim);font-weight:400}
+  .scroll{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:6px}
+  .badge{display:inline-block;padding:0 6px;border-radius:3px;color:#0f1419;font-size:11px;margin-right:6px}
+  .g0{background:#c9d4de}.g1{background:#ff9f9f}.g2{background:#ffc98f}.g3{background:#ffe68f}
+  .g4{background:#9fe6a8}.g5{background:#9fd6ff}.g6{background:#c3a7ff}.g7{background:#ff9ed1}.g8{background:#8fe3d8}
+  a.dl{color:var(--accent2);margin-left:10px}
+</style>
+</head>
+<body>
+
+<h1>有序 NFA 捕获替换</h1>
+<div class="sub">
+  模式与匹配优先级沿用有序 NFA；每次命中的整体、捕获、$` 与 $' 一律引用<b>原始输入</b>，
+  替换长短不影响后续范围；零长度命中不丢字、不重复，末尾空命中仅一次；
+  未参与捕获显示 null（区别于真正的空捕获），不存在的组编号按字面量保留。
+</div>
+
+<div class="panel">
+  <h2>输入</h2>
+  <label>模式 <span class="counter" id="patCount">0 / 120</span></label>
+  <input type="text" id="pattern" maxlength="120" spellcheck="false" autocomplete="off" value="(a)?b">
+  <label>原文（ASCII） <span class="counter" id="srcCount">0 / 2000</span></label>
+  <textarea id="source" maxlength="2000" spellcheck="false">ab b ab</textarea>
+  <label>替换模板（$$ $&amp; $` $' $1～$8） <span class="counter" id="tplCount">0 / 2000</span></label>
+  <textarea id="template" maxlength="2000" spellcheck="false">$1-$&amp;</textarea>
+  <div class="err" id="inputErr"></div>
+  <div class="controls"><button id="run">执行替换</button></div>
+</div>
+
+<div class="panel">
+  <h2>替换后文本（与下载内容为同一结果）</h2>
+  <div class="strip mn" id="outText">尚未执行</div>
+  <div class="controls"><span id="outMeta" class="mn"></span><a class="dl" id="download" style="display:none" href="#">下载替换文本</a></div>
+</div>
+
+<div class="panel">
+  <h2>命中范围与捕获证据（区间均针对原文）</h2>
+  <div class="scroll"><table id="evidence">
+    <tr><th>#</th><th>整体区间</th><th>命中原文</th><th>捕获组</th><th>替换为</th></tr>
+  </table></div>
+</div>
+
+<script src="regex-core.js"></script>
+<script src="replacement.js"></script>
+<script src="replace-page.js"></script>
+</body>
+</html>
